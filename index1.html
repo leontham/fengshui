@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feng Shui Floor Plan Tool</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF.js for handling PDF files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        #display-wrapper {
+            overflow: hidden; /* This is crucial for the zoom effect */
+            background-color: white; /* Ensures empty space is white */
+        }
+        #floorplan-container {
+            position: relative;
+            cursor: crosshair;
+            transition: transform 0.5s ease-in-out; /* Smooth zoom transition */
+            background-color: white; /* Sets the background of the canvas area */
+            transform-origin: 0 0; /* CRITICAL for correct zoom/pan calculation */
+        }
+        #floorplan-container.panning {
+            cursor: grabbing;
+            transition: none; /* Disable transition during panning for responsiveness */
+        }
+        #floorplan-container.zoomed-in {
+            cursor: grab;
+        }
+        #floorplan-image, #floorplan-canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            user-select: none;
+        }
+        #drawing-canvas { 
+            position: absolute; top: 0; left: 0; pointer-events: none; 
+        }
+        #center-dot {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: red;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+        #compass-container {
+            position: absolute;
+            width: 100%; 
+            height: 100%;
+            display: none;
+            pointer-events: none;
+        }
+        #compass {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform-origin: center center;
+        }
+        #arrow-wrapper {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            transform-origin: center center;
+        }
+        #facing-arrow {
+            position: absolute;
+            width: 20px;
+            height: 50px;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .facing-btn.active {
+            background-color: #4f46e5;
+            color: white;
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100 text-gray-800 flex flex-col items-center min-h-screen p-4 md:p-8">
+
+    <div class="w-full max-w-6xl bg-white rounded-2xl shadow-xl p-6 md:p-8">
+        <header class="text-center mb-6">
+            <h1 class="text-3xl md:text-4xl font-bold text-indigo-600">Feng Shui Floor Plan Tool</h1>
+            <p class="text-gray-500 mt-2">A simplified tool for floor plan analysis.</p>
+        </header>
+
+        <div class="flex flex-col lg:flex-row gap-8">
+            <!-- Controls -->
+            <div class="lg:w-1/3 space-y-6">
+                <div id="step-1" class="bg-gray-50 p-4 rounded-lg border">
+                    <h2 class="font-bold mb-2 flex items-center"><span class="bg-indigo-600 text-white rounded-full w-8 h-8 flex items-center justify-center mr-2">1</span> Upload New File</h2>
+                    <p class="text-sm text-gray-600 mb-4">Upload a new aligned floor plan at any time.</p>
+                    <label for="file-upload" class="w-full inline-block text-center bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg cursor-pointer hover:bg-indigo-700">Choose File</label>
+                    <input id="file-upload" type="file" class="hidden" accept="image/jpeg, image/png, application/pdf">
+                </div>
+
+                <div id="step-2" class="bg-gray-50 p-4 rounded-lg border hidden">
+                    <h2 class="font-bold mb-2 flex items-center"><span class="bg-indigo-600 text-white rounded-full w-8 h-8 flex items-center justify-center mr-2">2</span> Select Area</h2>
+                    <p class="text-sm text-gray-600">Click and drag a box on the floor plan to zoom in.</p>
+                    <button id="reset-btn" class="w-full mt-4 bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600">Reset View</button>
+                </div>
+
+                <div id="step-3" class="bg-gray-50 p-4 rounded-lg border hidden">
+                     <h2 class="font-bold mb-2 flex items-center"><span class="bg-indigo-600 text-white rounded-full w-8 h-8 flex items-center justify-center mr-2">3</span> Set Facing Direction</h2>
+                     <p class="text-sm text-gray-600 mb-2">a) Indicate if the front is at the top or bottom of the plan.</p>
+                     <div class="flex gap-2">
+                         <button id="facing-top-btn" class="facing-btn flex-1 bg-indigo-500 text-white p-2 rounded-md active">Facing is Top</button>
+                         <button id="facing-bottom-btn" class="facing-btn flex-1 bg-gray-200 p-2 rounded-md">Facing is Bottom</button>
+                     </div>
+                     <div class="mt-4">
+                         <label for="facing-direction-input" class="block text-sm font-medium">b) Enter the actual compass angle of the facing direction (°)</label>
+                         <input id="facing-direction-input" type="number" min="0" max="360" placeholder="e.g., 180 for South" class="w-full p-2 border border-gray-300 rounded-md">
+                     </div>
+                     <div class="mt-4">
+                        <label for="opacity-slider" class="block text-sm font-medium">Compass Transparency</label>
+                        <input id="opacity-slider" type="range" min="0.1" max="1" value="0.75" step="0.05" class="w-full">
+                     </div>
+                     <div class="mt-4">
+                        <label for="zoom-slider" class="block text-sm font-medium">Zoom Level</label>
+                        <input id="zoom-slider" type="range" min="1" max="5" value="1.5" step="0.1" class="w-full">
+                     </div>
+                     <button id="save-btn" class="w-full mt-6 bg-green-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-600 hidden">Save as PNG</button>
+                </div>
+            </div>
+
+            <!-- Display Area -->
+            <div id="display-wrapper" class="lg:w-2/3 bg-gray-200 rounded-lg border-2 border-dashed min-h-[400px] lg:min-h-[600px] p-2 flex items-center justify-center">
+                <div id="floorplan-container">
+                     <canvas id="drawing-canvas"></canvas>
+                     <p id="placeholder-text" class="text-gray-500">Your floor plan will appear here</p>
+                     <div id="center-dot"></div>
+                     <div id="compass-container">
+                        <svg id="compass" viewBox="0 0 200 200"></svg>
+                        <div id="arrow-wrapper">
+                            <svg id="facing-arrow" viewBox="0 0 20 50">
+                                <path d="M 10 0 L 20 15 L 12 15 L 12 50 L 8 50 L 8 15 L 0 15 Z" fill="#DAA520" stroke="black" stroke-width="0.5"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js`;
+
+        // --- DOM ELEMENTS ---
+        const fileUpload = document.getElementById('file-upload');
+        const displayWrapper = document.getElementById('display-wrapper');
+        const floorplanContainer = document.getElementById('floorplan-container');
+        const drawingCanvas = document.getElementById('drawing-canvas');
+        const drawingCtx = drawingCanvas.getContext('2d');
+        const placeholderText = document.getElementById('placeholder-text');
+        const compassContainer = document.getElementById('compass-container');
+        const compassSVG = document.getElementById('compass');
+        const arrowWrapper = document.getElementById('arrow-wrapper');
+        const resetBtn = document.getElementById('reset-btn');
+        const facingDirectionInput = document.getElementById('facing-direction-input');
+        const centerDot = document.getElementById('center-dot');
+        const facingTopBtn = document.getElementById('facing-top-btn');
+        const facingBottomBtn = document.getElementById('facing-bottom-btn');
+        const opacitySlider = document.getElementById('opacity-slider');
+        const saveBtn = document.getElementById('save-btn');
+        const zoomSlider = document.getElementById('zoom-slider');
+        
+        // --- STATE MANAGEMENT ---
+        let originalImage = null;
+        let activeElement = null;
+        let isDrawing = false;
+        let selectionRect = {};
+        let viewCenter = { x: 0, y: 0 }; // To keep the zoom centered
+        let facingReferenceAngle = 0; // 0 for Top, 180 for Bottom
+        let isPanning = false;
+        let panStart = { x: 0, y: 0 };
+        let panTransform = { x: 0, y: 0, scale: 1 };
+
+        // --- UI STEPS ---
+        const steps = {
+            step1: document.getElementById('step-1'),
+            step2: document.getElementById('step-2'),
+            step3: document.getElementById('step-3'),
+        };
+
+        // --- INITIALIZATION ---
+        function initCompassSVG() {
+            compassSVG.innerHTML = '';
+            const ns = 'http://www.w3.org/2000/svg';
+
+            // Helper functions
+            function createText(content, x, y, size, rotation = 0, fill = 'black') {
+                const text = document.createElementNS(ns, 'text');
+                text.setAttribute('x', x);
+                text.setAttribute('y', y);
+                text.setAttribute('font-size', size);
+                text.setAttribute('fill', fill);
+                text.setAttribute('text-anchor', 'middle');
+                text.setAttribute('dominant-baseline', 'middle');
+                text.setAttribute('transform', `rotate(${rotation}, ${x}, ${y})`);
+                text.textContent = content;
+                return text;
+            }
+
+            function createPath(d, fill, stroke, strokeWidth) {
+                const path = document.createElementNS(ns, 'path');
+                path.setAttribute('d', d);
+                path.setAttribute('fill', fill);
+                if (stroke) path.setAttribute('stroke', stroke);
+                if (strokeWidth) path.setAttribute('stroke-width', strokeWidth);
+                return path;
+            }
+
+            // Data for the 8 sectors
+            const sectorData = [
+                { angle: 0,   trigram: '☵', number: '1', name: '正北' }, // North
+                { angle: 45,  trigram: '☶', number: '8', name: '东北' }, // Northeast
+                { angle: 90,  trigram: '☳', number: '3', name: '正东' }, // East
+                { angle: 135, trigram: '☴', number: '4', name: '东南' }, // Southeast
+                { angle: 180, trigram: '☲', number: '9', name: '正南' }, // South
+                { angle: 225, trigram: '☷', number: '2', name: '西南' }, // Southwest
+                { angle: 270, trigram: '☱', number: '7', name: '正西' }, // West
+                { angle: 315, trigram: '☰', number: '6', name: '西北' }  // Northwest
+            ];
+            
+            // Background circle
+            const bg = createPath('M 0 100 A 100 100 0 0 1 100 0 A 100 100 0 0 1 200 100 A 100 100 0 0 1 100 200 A 100 100 0 0 1 0 100 Z', 'white');
+            bg.setAttribute('fill-opacity', '0.7');
+            compassSVG.appendChild(bg);
+
+            // Red background sectors
+            const redGroup = document.createElementNS(ns, 'g');
+            const redIndices = [0, 3, 4, 6]; // N, SE, S, W
+            redIndices.forEach(i => {
+                const angle = sectorData[i].angle;
+                const r_outer = 85; // Cover the four outer rings
+                const r_inner = 30;
+                const startAngleRad = (angle - 90 - 22.5) * Math.PI / 180;
+                const endAngleRad = (angle - 90 + 22.5) * Math.PI / 180;
+
+                const x_outer_start = 100 + r_outer * Math.cos(startAngleRad);
+                const y_outer_start = 100 + r_outer * Math.sin(startAngleRad);
+                const x_outer_end = 100 + r_outer * Math.cos(endAngleRad);
+                const y_outer_end = 100 + r_outer * Math.sin(endAngleRad);
+                const x_inner_start = 100 + r_inner * Math.cos(startAngleRad);
+                const y_inner_start = 100 + r_inner * Math.sin(startAngleRad);
+                const x_inner_end = 100 + r_inner * Math.cos(endAngleRad);
+                const y_inner_end = 100 + r_inner * Math.sin(endAngleRad);
+                
+                const pathData = `M ${x_inner_start},${y_inner_start} L ${x_outer_start},${y_outer_start} A ${r_outer},${r_outer} 0 0 1 ${x_outer_end},${y_outer_end} L ${x_inner_end},${y_inner_end} A ${r_inner},${r_inner} 0 0 0 ${x_inner_start},${y_inner_start} Z`;
+                const path = createPath(pathData, 'red');
+                path.setAttribute('fill-opacity', 0.4);
+                redGroup.appendChild(path);
+            });
+            compassSVG.appendChild(redGroup);
+
+            // Rings
+            const rings = [98, 85, 70, 55, 30];
+            rings.forEach(r => {
+                const circle = document.createElementNS(ns, 'circle');
+                circle.setAttribute('cx', 100); circle.setAttribute('cy', 100); circle.setAttribute('r', r);
+                circle.setAttribute('fill', 'none'); circle.setAttribute('stroke', 'black'); circle.setAttribute('stroke-width', '0.5');
+                compassSVG.appendChild(circle);
+            });
+
+            // Degree markers
+            const degreeGroup = document.createElementNS(ns, 'g');
+            for (let i = 0; i < 360; i += 2) {
+                const angleRad = (i - 90) * Math.PI / 180;
+                const isMajor = i % 10 === 0;
+                const r1 = isMajor ? 92 : 95;
+                const r2 = 98;
+                const x1 = 100 + r1 * Math.cos(angleRad);
+                const y1 = 100 + r1 * Math.sin(angleRad);
+                const x2 = 100 + r2 * Math.cos(angleRad);
+                const y2 = 100 + r2 * Math.sin(angleRad);
+                const line = document.createElementNS(ns, 'line');
+                line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+                line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+                line.setAttribute('stroke', 'black'); line.setAttribute('stroke-width', isMajor ? 0.7 : 0.4);
+                degreeGroup.appendChild(line);
+
+                if (i % 10 === 0) {
+                     const textR = 89;
+                     const textX = 100 + textR * Math.cos(angleRad);
+                     const textY = 100 + textR * Math.sin(angleRad);
+                     const text = createText(i, textX, textY, 4, i);
+                     degreeGroup.appendChild(text);
+                }
+            }
+            compassSVG.appendChild(degreeGroup);
+
+            // Trigrams, Numbers, and Text
+            const contentGroup = document.createElementNS(ns, 'g');
+            sectorData.forEach(sector => {
+                const angleRad = (sector.angle - 90) * Math.PI / 180;
+                
+                // Trigrams
+                const r_trigram = 42.5;
+                const x_trigram = 100 + r_trigram * Math.cos(angleRad);
+                const y_trigram = 100 + r_trigram * Math.sin(angleRad);
+                contentGroup.appendChild(createText(sector.trigram, x_trigram, y_trigram, 12, sector.angle));
+
+                // Numbers
+                const r_number = 62.5;
+                const x_number = 100 + r_number * Math.cos(angleRad);
+                const y_number = 100 + r_number * Math.sin(angleRad);
+                contentGroup.appendChild(createText(sector.number, x_number, y_number, 10, sector.angle, 'red'));
+
+                // Names
+                const r_name = 77.5;
+                const x_name = 100 + r_name * Math.cos(angleRad);
+                const y_name = 100 + r_name * Math.sin(angleRad);
+                contentGroup.appendChild(createText(sector.name, x_name, y_name, 7, sector.angle));
+            });
+            compassSVG.appendChild(contentGroup);
+            
+            // Center Number 5
+            compassSVG.appendChild(createText('5', 100, 100, 10, 0, 'red'));
+        }
+        initCompassSVG();
+
+        // --- EVENT LISTENERS ---
+        fileUpload.addEventListener('change', handleFileSelect);
+        // Mouse Listeners
+        floorplanContainer.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        // Touch Listeners for Mobile Support
+        floorplanContainer.addEventListener('touchstart', onMouseDown, { passive: false });
+        document.addEventListener('touchmove', onMouseMove, { passive: false });
+        document.addEventListener('touchend', onMouseUp);
+
+
+        resetBtn.addEventListener('click', resetView);
+        saveBtn.addEventListener('click', saveAsPNG);
+        
+        facingTopBtn.addEventListener('click', () => {
+            facingReferenceAngle = 0;
+            facingTopBtn.classList.add('active');
+            facingBottomBtn.classList.remove('active');
+            setOrientation();
+        });
+
+        facingBottomBtn.addEventListener('click', () => {
+            facingReferenceAngle = 180;
+            facingBottomBtn.classList.add('active');
+            facingTopBtn.classList.remove('active');
+            setOrientation();
+        });
+
+        facingDirectionInput.addEventListener('input', () => setOrientation());
+
+        opacitySlider.addEventListener('input', (e) => {
+            if(compassContainer) compassContainer.style.opacity = e.target.value;
+        });
+
+        zoomSlider.addEventListener('input', handleZoom);
+
+        // --- MOUSE/PANNING DISPATCHERS ---
+        function onMouseDown(event) {
+            if (!activeElement) return;
+            if (selectionRect.w) { // If zoomed in
+                startPan(event);
+            } else { // If at original view
+                startDrawing(event);
+            }
+        }
+        
+        function onMouseMove(event) {
+            if (isDrawing) {
+                drawRectangle(event);
+            } else if (isPanning) {
+                panView(event);
+            }
+        }
+        
+        function onMouseUp() {
+            if (isDrawing) {
+                stopDrawing();
+            } else if (isPanning) {
+                stopPan();
+            }
+        }
+
+        // --- CORE FUNCTIONS ---
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            resetAll();
+            placeholderText.style.display = 'none';
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                if (file.type.startsWith('image/')) {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.onload = () => {
+                        originalImage = img;
+                        setupInitialView(img);
+                    };
+                } else if (file.type === 'application/pdf') {
+                    renderPdf(e.target.result);
+                }
+            };
+            if (file.type.startsWith('image/')) reader.readAsDataURL(file);
+            else if (file.type === 'application/pdf') reader.readAsArrayBuffer(file);
+        }
+        
+        async function renderPdf(data) {
+            try {
+                const pdf = await pdfjsLib.getDocument({ data }).promise;
+                const page = await pdf.getPage(1);
+                const viewport = page.getViewport({ scale: 2.0 });
+                const canvas = document.createElement('canvas');
+                canvas.id = 'floorplan-canvas';
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                originalImage = canvas;
+                setupInitialView(canvas);
+            } catch (error) {
+                alert('Could not render PDF.');
+            }
+        }
+
+        function setupInitialView(element) {
+            activeElement = element;
+            element.id = 'floorplan-image';
+            floorplanContainer.prepend(element);
+            steps.step2.classList.remove('hidden');
+            setTimeout(() => {
+                drawingCanvas.width = element.offsetWidth;
+                drawingCanvas.height = element.offsetHeight;
+            }, 100);
+        }
+
+        function getMousePos(event) {
+            const input = event.touches ? event.touches[0] : event;
+            const rect = floorplanContainer.getBoundingClientRect();
+             // This needs to account for the current transform (zoom and pan)
+            const style = window.getComputedStyle(floorplanContainer);
+            const matrix = new DOMMatrixReadOnly(style.transform);
+            const scale = matrix.a;
+            const translateX = matrix.e;
+            const translateY = matrix.f;
+
+            // Invert the transform to find the original coordinates
+            return {
+                x: (input.clientX - rect.left - translateX) / scale,
+                y: (input.clientY - rect.top - translateY) / scale
+            };
+        }
+
+        function startDrawing(event) {
+            if (!activeElement || selectionRect.w) return;
+            event.preventDefault();
+            const startPos = getMousePos(event);
+            isDrawing = true;
+            selectionRect.x = startPos.x;
+            selectionRect.y = startPos.y;
+        }
+
+        function drawRectangle(event) {
+            if (!isDrawing) return;
+            event.preventDefault();
+            const currentPos = getMousePos(event);
+            selectionRect.w = currentPos.x - selectionRect.x;
+            selectionRect.h = currentPos.y - selectionRect.y;
+            drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+            drawingCtx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
+            drawingCtx.lineWidth = 2;
+            drawingCtx.strokeRect(selectionRect.x, selectionRect.y, selectionRect.w, selectionRect.h);
+        }
+
+        function stopDrawing() {
+            if (!isDrawing) return;
+            isDrawing = false;
+            
+            viewCenter.x = selectionRect.x + selectionRect.w / 2;
+            viewCenter.y = selectionRect.y + selectionRect.h / 2;
+
+            const wrapperRect = displayWrapper.getBoundingClientRect();
+            const wrapperCenterX = wrapperRect.width / 2;
+            const wrapperCenterY = wrapperRect.height / 2;
+
+            const zoom = 1.5;
+            zoomSlider.value = zoom; // Set slider to initial zoom
+            panTransform.scale = zoom;
+            panTransform.x = wrapperCenterX - (viewCenter.x * zoom);
+            panTransform.y = wrapperCenterY - (viewCenter.y * zoom);
+
+            floorplanContainer.style.transform = `translate(${panTransform.x}px, ${panTransform.y}px) scale(${panTransform.scale})`;
+            floorplanContainer.classList.add('zoomed-in');
+            
+            centerDot.style.left = `${viewCenter.x}px`;
+            centerDot.style.top = `${viewCenter.y}px`;
+            centerDot.style.display = 'block';
+
+            const compassSize = Math.max(Math.abs(selectionRect.w), Math.abs(selectionRect.h));
+            compassContainer.style.width = `${compassSize}px`;
+            compassContainer.style.height = `${compassSize}px`;
+            compassContainer.style.left = `${viewCenter.x}px`;
+            compassContainer.style.top = `${viewCenter.y}px`;
+            compassContainer.style.transform = `translate(-50%, -50%)`;
+
+            steps.step3.classList.remove('hidden');
+            saveBtn.classList.remove('hidden');
+            // Set initial opacity from slider
+            compassContainer.style.opacity = opacitySlider.value;
+        }
+
+        function setOrientation() {
+            const userAngle = parseFloat(facingDirectionInput.value) || 0;
+            compassContainer.style.display = 'block';
+
+            const compassRotation = facingReferenceAngle - userAngle;
+            const arrowRotation = facingReferenceAngle;
+
+            compassSVG.style.transform = `rotate(${compassRotation}deg)`;
+            arrowWrapper.style.transform = `rotate(${arrowRotation}deg)`;
+        }
+
+        // --- PANNING FUNCTIONS ---
+        function startPan(event) {
+            event.preventDefault();
+            isPanning = true;
+            const input = event.touches ? event.touches[0] : event;
+            panStart.x = input.clientX;
+            panStart.y = input.clientY;
+            floorplanContainer.classList.add('panning');
+        }
+
+        function panView(event) {
+            if (!isPanning) return;
+            event.preventDefault();
+            const input = event.touches ? event.touches[0] : event;
+            const dx = input.clientX - panStart.x;
+            const dy = input.clientY - panStart.y;
+            
+            const newX = panTransform.x + dx;
+            const newY = panTransform.y + dy;
+
+            floorplanContainer.style.transform = `translate(${newX}px, ${newY}px) scale(${panTransform.scale})`;
+        }
+
+        function stopPan() {
+            if (!isPanning) return;
+            isPanning = false;
+            floorplanContainer.classList.remove('panning');
+            
+            // Update the pan transform state so the next pan starts from the new position
+            const style = window.getComputedStyle(floorplanContainer);
+            const matrix = new DOMMatrixReadOnly(style.transform);
+            panTransform.x = matrix.e;
+            panTransform.y = matrix.f;
+        }
+
+        function handleZoom() {
+            const newScale = parseFloat(zoomSlider.value);
+            
+            const wrapperRect = displayWrapper.getBoundingClientRect();
+            const wrapperCenterX = wrapperRect.width / 2;
+            const wrapperCenterY = wrapperRect.height / 2;
+
+            // Recalculate translation to keep the original center point in the middle of the viewport
+            panTransform.x = wrapperCenterX - (viewCenter.x * newScale);
+            panTransform.y = wrapperCenterY - (viewCenter.y * newScale);
+            panTransform.scale = newScale;
+
+            floorplanContainer.style.transform = `translate(${panTransform.x}px, ${panTransform.y}px) scale(${panTransform.scale})`;
+        }
+
+        function resetView() {
+            selectionRect = {};
+            isDrawing = false;
+            
+            steps.step3.classList.add('hidden');
+            saveBtn.classList.add('hidden');
+            
+            floorplanContainer.style.transform = 'translate(0, 0) scale(1)';
+            floorplanContainer.classList.remove('zoomed-in');
+            centerDot.style.display = 'none';
+            compassContainer.style.display = 'none';
+
+            drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+            facingDirectionInput.value = '';
+            facingReferenceAngle = 0;
+            facingTopBtn.classList.add('active');
+            facingBottomBtn.classList.remove('active');
+            zoomSlider.value = 1.5;
+
+            panTransform = { x: 0, y: 0, scale: 1 };
+        }
+
+        function resetAll() {
+            if (activeElement) activeElement.remove();
+            originalImage = null;
+            activeElement = null;
+            
+            placeholderText.style.display = 'block';
+            steps.step2.classList.add('hidden');
+            
+            resetView();
+        }
+
+        // --- SAVE FUNCTIONALITY ---
+        /**
+         * Converts an SVG element into a promise that resolves with an Image object.
+         * This is needed to draw the SVG onto the canvas for saving.
+         * @param {SVGElement} svgElement The SVG element to convert.
+         * @returns {Promise<Image>} A promise that resolves with the loaded Image object.
+         */
+        function svgToImagePromise(svgElement) {
+            return new Promise((resolve, reject) => {
+                const svgString = new XMLSerializer().serializeToString(svgElement);
+                // Use unescape and encodeURIComponent to handle foreign characters in SVG
+                const svgDataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)));
+                
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = (err) => reject(err);
+                img.src = svgDataUrl;
+            });
+        }
+
+        /**
+         * Composites the floor plan and all overlays into a single image and triggers a download.
+         */
+        async function saveAsPNG() {
+            if (!originalImage || !selectionRect.w) {
+                alert("Please select an area on the floor plan first.");
+                return;
+            }
+
+            const finalCanvas = document.createElement('canvas');
+            const wrapperRect = displayWrapper.getBoundingClientRect();
+            finalCanvas.width = wrapperRect.width;
+            finalCanvas.height = wrapperRect.height;
+            const finalCtx = finalCanvas.getContext('2d');
+
+            // Draw the white background
+            finalCtx.fillStyle = 'white';
+            finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+
+            // Apply the same transform to the context as the floorplan container
+            finalCtx.save();
+            finalCtx.translate(panTransform.x, panTransform.y);
+            finalCtx.scale(panTransform.scale, panTransform.scale);
+            finalCtx.drawImage(originalImage, 0, 0, originalImage.width, originalImage.height);
+            finalCtx.restore();
+
+            // Prepare to draw overlays
+            try {
+                const compassImg = await svgToImagePromise(compassSVG);
+                const arrowImg = await svgToImagePromise(document.getElementById('facing-arrow'));
+
+                // Calculate the position and size of the compass relative to the final canvas
+                const centerX_on_plan = selectionRect.x + selectionRect.w / 2;
+                const centerY_on_plan = selectionRect.y + selectionRect.h / 2;
+
+                const transformedCenter = {
+                    x: centerX_on_plan * panTransform.scale + panTransform.x,
+                    y: centerY_on_plan * panTransform.scale + panTransform.y,
+                };
+                
+                const compassSize_on_plan = Math.max(Math.abs(selectionRect.w), Math.abs(selectionRect.h));
+                const compassSize_on_canvas = compassSize_on_plan * panTransform.scale;
+                
+                finalCtx.globalAlpha = parseFloat(opacitySlider.value);
+
+                // Draw Compass
+                finalCtx.save();
+                finalCtx.translate(transformedCenter.x, transformedCenter.y);
+                const compassRotation = facingReferenceAngle - (parseFloat(facingDirectionInput.value) || 0);
+                finalCtx.rotate(compassRotation * Math.PI / 180);
+                finalCtx.drawImage(compassImg, -compassSize_on_canvas / 2, -compassSize_on_canvas / 2, compassSize_on_canvas, compassSize_on_canvas);
+                finalCtx.restore();
+
+                // Draw Arrow
+                finalCtx.save();
+                finalCtx.translate(transformedCenter.x, transformedCenter.y);
+                finalCtx.rotate(facingReferenceAngle * Math.PI / 180);
+                // Scale arrow based on compass size
+                const baseCompassSize = 200; // The viewBox size of the SVG
+                const scaleFactor = compassSize_on_canvas / baseCompassSize;
+                const arrowWidth = 20 * scaleFactor;
+                const arrowHeight = 50 * scaleFactor;
+                const arrowYOffset = -25 * scaleFactor; // Half height of arrow
+                finalCtx.drawImage(arrowImg, -arrowWidth / 2, -arrowYOffset - (compassSize_on_canvas / 2), arrowWidth, arrowHeight);
+                finalCtx.restore();
+
+                // Trigger download
+                finalCtx.globalAlpha = 1.0; 
+                const link = document.createElement('a');
+                link.download = 'feng-shui-plan.png';
+                link.href = finalCanvas.toDataURL('image/png');
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+            } catch (err) {
+                console.error("Error creating image from SVG for saving:", err);
+                alert("Could not save the image. Please try again.");
+            }
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+
+
