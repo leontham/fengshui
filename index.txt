@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feng Shui Floor Plan Tool</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF.js for handling PDF files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        #display-wrapper {
+            overflow: hidden; /* This is crucial for the zoom effect */
+            background-color: white; /* Ensures empty space is white */
+        }
+        #floorplan-container {
+            position: relative;
+            cursor: crosshair;
+            transition: transform 0.5s ease-in-out; /* Smooth zoom transition */
+            background-color: white; /* Sets the background of the canvas area */
+            transform-origin: 0 0; /* CRITICAL for correct zoom/pan calculation */
+        }
+        #floorplan-container.panning {
+            cursor: grabbing;
+            transition: none; /* Disable transition during panning for responsiveness */
+        }
+        #floorplan-container.zoomed-in {
+            cursor: grab;
+        }
+        #floorplan-image, #floorplan-canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            user-select: none;
+        }
+        #drawing-canvas { 
+            position: absolute; top: 0; left: 0; pointer-events: none; 
+        }
+        #center-dot {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: red;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+        #compass-container {
+            position: absolute;
+            width: 100%; 
+            height: 100%;
+            display: none;
+            pointer-events: none;
+        }
+        #compass {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform-origin: center center;
+        }
+        #arrow-wrapper {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            transform-origin: center center;
+        }
+        #facing-arrow {
+            position: absolute;
+            width: 20px;
+            height: 50px;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .facing-btn {
+             background-color: #e5e7eb; /* gray-200 */
+             color: #1f2937; /* gray-800 */
+        }
+        .facing-btn.active {
+            background-color: #4f46e5;
+            color: white;
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100 text-gray-800 flex flex-col items-center min-h-screen p-4 md:p-8">
+
+    <div class="w-full max-w-6xl bg-white rounded-2xl shadow-xl p-6 md:p-8">
+        <header class="text-center mb-6">
+            <h1 class="text-3xl md:text-4xl font-bold text-indigo-600">Feng Shui Floor Plan Tool</h1>
+            <p class="text-gray-500 mt-2">A simplified tool for floor plan analysis.</p>
+        </header>
+
+        <!-- Tab Navigation -->
+        <div class="mb-4 border-b border-gray-200">
+            <ul class="flex flex-wrap -mb-px text-sm font-medium text-center" id="myTab" role="tablist">
+                <li class="mr-2" role="presentation">
+                    <button class="inline-block p-4 border-b-2 rounded-t-lg" id="tool-tab" data-tabs-target="#tool" type="button" role="tab" aria-controls="tool" aria-selected="true">Feng Shui Tool</button>
+                </li>
+                <li class="mr-2" role="presentation">
+                    <button class="inline-block p-4 border-b-2 rounded-t-lg border-transparent hover:text-gray-600 hover:border-gray-300" id="explanation-tab" data-tabs-target="#explanation" type="button" role="tab" aria-controls="explanation" aria-selected="false">8 Mansions Explained</button>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Tab Content -->
+        <div id="myTabContent">
+            <!-- Feng Shui Tool Tab -->
+            <div class="" id="tool" role="tabpanel" aria-labelledby="tool-tab">
+                <div class="flex flex-col lg:flex-row gap-8">
+                    <!-- Controls -->
+                    <div class="lg:w-1/3 space-y-6">
+                        <div id="step-1" class="bg-gray-50 p-4 rounded-lg border">
+                            <h2 class="font-bold mb-2 flex items-center"><span class="bg-indigo-600 text-white rounded-full w-8 h-8 flex items-center justify-center mr-2">1</span> Upload Your Floorplan</h2>
+                            <p class="text-sm text-gray-600 mb-4">Upload your aligned floor plan (JPG, PNG, PDF).</p>
+                            <label for="file-upload" class="w-full inline-block text-center bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg cursor-pointer hover:bg-indigo-700">Choose File</label>
+                            <input id="file-upload" type="file" class="hidden" accept="image/jpeg, image/png, application/pdf">
+                        </div>
+
+                        <div id="step-2" class="bg-gray-50 p-4 rounded-lg border hidden">
+                            <h2 class="font-bold mb-2 flex items-center"><span class="bg-indigo-600 text-white rounded-full w-8 h-8 flex items-center justify-center mr-2">2</span> Determine Your Gua Number</h2>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label for="surname" class="block text-sm font-medium">Surname</label>
+                                    <input id="surname" type="text" placeholder="e.g., Smith" class="w-full p-2 border rounded-md">
+                                </div>
+                                <div>
+                                    <label for="given-name" class="block text-sm font-medium">Given Name</label>
+                                    <input id="given-name" type="text" placeholder="e.g., John" class="w-full p-2 border rounded-md">
+                                </div>
+                                <div>
+                                    <label for="birth-year" class="block text-sm font-medium">Birth Year</label>
+                                    <input id="birth-year" type="number" placeholder="e.g., 1985" class="w-full p-2 border rounded-md">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium">Gender</label>
+                                    <select id="gender" class="w-full p-2 border rounded-md">
+                                        <option value="male">Male</option>
+                                        <option value="female">Female</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button id="calculate-gua-btn" class="w-full mt-4 bg-indigo-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-600">Calculate</button>
+                            <div id="gua-result" class="mt-4 hidden">
+                                <p class="text-center font-bold">Your Gua Number: <span id="gua-number-display"></span></p>
+                                <p class="text-center text-sm">You belong to the <span id="gua-group-display"></span>.</p>
+                                <div id="legend" class="mt-2 text-xs grid grid-cols-2 gap-x-2"></div>
+                            </div>
+                        </div>
+
+                        <div id="step-3" class="bg-gray-50 p-4 rounded-lg border hidden">
+                            <h2 class="font-bold mb-2 flex items-center"><span class="bg-indigo-600 text-white rounded-full w-8 h-8 flex items-center justify-center mr-2">3</span> Select Area & Set Direction</h2>
+                            <p class="text-sm text-gray-600 mb-2">a) Click and drag on the plan to zoom in.</p>
+                            <button id="reset-btn" class="w-full mt-4 bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600">Reset View</button>
+                             <p class="text-sm text-gray-600 mt-4 mb-2">b) Indicate the facing direction of your house on the plan uploaded.</p>
+                             <div class="grid grid-cols-2 gap-2">
+                                 <button data-angle="0" class="facing-btn p-2 rounded-md active">Facing is Top</button>
+                                 <button data-angle="90" class="facing-btn p-2 rounded-md">Facing is Right</button>
+                                 <button data-angle="180" class="facing-btn p-2 rounded-md">Facing is Bottom</button>
+                                 <button data-angle="270" class="facing-btn p-2 rounded-md">Facing is Left</button>
+                             </div>
+                             <div class="mt-4">
+                                 <label for="facing-direction-input" class="block text-sm font-medium">c) Enter the actual compass angle (°)</label>
+                                 <input id="facing-direction-input" type="number" min="0" max="360" placeholder="e.g., 180 for South" class="w-full p-2 border border-gray-300 rounded-md">
+                             </div>
+                             <div class="mt-4">
+                                <label for="opacity-slider" class="block text-sm font-medium">Compass Transparency</label>
+                                <input id="opacity-slider" type="range" min="0.1" max="1" value="0.75" step="0.05" class="w-full">
+                             </div>
+                             <div class="mt-4">
+                                <label for="zoom-slider" class="block text-sm font-medium">Zoom Level</label>
+                                <input id="zoom-slider" type="range" min="1" max="5" value="1.5" step="0.1" class="w-full">
+                             </div>
+                             <button id="save-btn" class="w-full mt-6 bg-green-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-600 hidden">Save as PNG</button>
+                        </div>
+                    </div>
+
+                    <!-- Display Area -->
+                    <div id="display-wrapper" class="lg:w-2/3 bg-gray-200 rounded-lg border-2 border-dashed min-h-[400px] lg:min-h-[600px] p-2 flex items-center justify-center">
+                        <div id="floorplan-container">
+                             <canvas id="drawing-canvas"></canvas>
+                             <p id="placeholder-text" class="text-gray-500">Your floor plan will appear here</p>
+                             <div id="center-dot"></div>
+                             <div id="compass-container">
+                                <svg id="compass" viewBox="0 0 200 200"></svg>
+                                <div id="arrow-wrapper">
+                                    <svg id="facing-arrow" viewBox="0 0 20 50">
+                                        <path d="M 10 0 L 20 15 L 12 15 L 12 50 L 8 50 L 8 15 L 0 15 Z" fill="#DAA520" stroke="black" stroke-width="0.5"/>
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 8 Mansions Explanation Tab -->
+            <div class="hidden" id="explanation" role="tabpanel" aria-labelledby="explanation-tab">
+                <div class="prose max-w-none p-4 bg-gray-50 rounded-lg">
+                    <h2 id="explanation-greeting" class="text-2xl font-bold mb-4">Understanding the 8 Mansions (Ba Zhai)</h2>
+                    <p>The 8 Mansions system is a personalized form of Feng Shui that uses your birth date and gender to determine your unique set of auspicious (favorable) and inauspicious (unfavorable) directions. These are based on your **Gua Number**.</p>
+                    <p>By aligning your home and the key areas within it (like your bed, desk, and main door) with your favorable directions, you can enhance good fortune, health, and relationships. Conversely, avoiding or remedying your unfavorable directions can help minimize negative influences.</p>
+                    
+                    <h3 class="text-xl font-semibold mt-6 mb-3 text-green-700">The Four Auspicious (Favorable) Sectors</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold">Sheng Qi (生氣) - Prosperity <span class="text-sm font-normal text-gray-600" id="sheng-qi-mansion-number"></span></h4>
+                            <p>Also known as "Life Generating," this is your best direction. It attracts wealth, success, and high status. It's ideal for the main door or an office/study area to enhance career and financial luck.</p>
+                        </div>
+                        <div>
+                            <h4 class="font-bold">Tian Yi (天醫) - Health <span class="text-sm font-normal text-gray-600" id="tian-yi-mansion-number"></span></h4>
+                            <p>The "Heavenly Doctor" direction governs health and wellbeing. It is excellent for a bedroom, especially for those who are ill or recovering. Placing your bed with the headboard pointing this way can promote good health.</p>
+                        </div>
+                        <div>
+                            <h4 class="font-bold">Yan Nian (延年) - Romance <span class="text-sm font-normal text-gray-600" id="yan-nian-mansion-number"></span></h4>
+                            <p>This sector influences relationships, romance, and family harmony. It's a great direction for the master bedroom or the living room to foster strong social and romantic connections.</p>
+                        </div>
+                        <div>
+                            <h4 class="font-bold">Fu Wei (伏位) - Personal Growth <span class="text-sm font-normal text-gray-600" id="fu-wei-mansion-number"></span></h4>
+                            <p>This direction is for stability, clarity of mind, and personal development. It's an excellent location for a study area, meditation space, or a child's bedroom to support focus and learning.</p>
+                        </div>
+                    </div>
+
+                    <h3 class="text-xl font-semibold mt-8 mb-3 text-red-700">The Four Inauspicious (Unfavorable) Sectors</h3>
+                     <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold">Jue Ming (絕命) - Total Loss <span class="text-sm font-normal text-gray-600" id="jue-ming-mansion-number"></span></h4>
+                            <p>This is the most severe and dangerous direction, associated with major illness, accidents, and financial ruin. Avoid having your main door, bedroom, or stove facing this direction. Keep this area quiet and use it for storage if possible.</p>
+                        </div>
+                        <div>
+                            <h4 class="font-bold">Wu Gui (五鬼) - Five Ghosts <span class="text-sm font-normal text-gray-600" id="wu-gui-mansion-number"></span></h4>
+                            <p>This sector brings conflicts, arguments, backstabbing, and financial loss. It can lead to stress and turmoil. It's best to use this area for a bathroom or storeroom. Avoid important activities here.</p>
+                        </div>
+                        <div>
+                            <h4 class="font-bold">Liu Sha (六煞) - Six Killings <span class="text-sm font-normal text-gray-600" id="liu-sha-mansion-number"></span></h4>
+                            <p>This direction is linked to legal problems, scandals, and relationship troubles. It can bring obstacles and complications into your life. Keep this sector of the house quiet and clean.</p>
+                        </div>
+                        <div>
+                            <h4 class="font-bold">Huo Hai (禍害) - Obstacles <span class="text-sm font-normal text-gray-600" id="huo-hai-mansion-number"></span></h4>
+                            <p>The "Mishaps" sector is the least severe of the inauspicious directions, but it can still bring frustration, obstacles, and minor accidents. While not as dangerous as the others, it's still best to avoid using this area for important purposes.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js`;
+
+        // --- DOM ELEMENTS ---
+        const fileUpload = document.getElementById('file-upload');
+        const displayWrapper = document.getElementById('display-wrapper');
+        const floorplanContainer = document.getElementById('floorplan-container');
+        const drawingCanvas = document.getElementById('drawing-canvas');
+        const drawingCtx = drawingCanvas.getContext('2d');
+        const placeholderText = document.getElementById('placeholder-text');
+        const compassContainer = document.getElementById('compass-container');
+        const compassSVG = document.getElementById('compass');
+        const arrowWrapper = document.getElementById('arrow-wrapper');
+        const resetBtn = document.getElementById('reset-btn');
+        const facingDirectionInput = document.getElementById('facing-direction-input');
+        const centerDot = document.getElementById('center-dot');
+        const facingBtns = document.querySelectorAll('.facing-btn');
+        const opacitySlider = document.getElementById('opacity-slider');
+        const saveBtn = document.getElementById('save-btn');
+        const zoomSlider = document.getElementById('zoom-slider');
+        
+        // --- 8 MANSIONS UI ---
+        const surnameInput = document.getElementById('surname');
+        const givenNameInput = document.getElementById('given-name');
+        const birthYearInput = document.getElementById('birth-year');
+        const genderSelect = document.getElementById('gender');
+        const calculateGuaBtn = document.getElementById('calculate-gua-btn');
+        const guaResultDiv = document.getElementById('gua-result');
+        const guaNumberDisplay = document.getElementById('gua-number-display');
+        const guaGroupDisplay = document.getElementById('gua-group-display');
+        const legendDiv = document.getElementById('legend');
+        const explanationGreeting = document.getElementById('explanation-greeting');
+        
+        // --- STATE MANAGEMENT ---
+        let originalImage = null;
+        let activeElement = null;
+        let isDrawing = false;
+        let selectionRect = {};
+        let viewCenter = { x: 0, y: 0 }; // To keep the zoom centered
+        let facingReferenceAngle = 0; // 0 for Top, 90 Right, 180 Bottom, 270 Left
+        let isPanning = false;
+        let panStart = { x: 0, y: 0 };
+        let panTransform = { x: 0, y: 0, scale: 1 };
+        let userGuaData = null;
+
+        // --- UI STEPS ---
+        const steps = {
+            step1: document.getElementById('step-1'),
+            step2: document.getElementById('step-2'),
+            step3: document.getElementById('step-3'),
+        };
+
+        // --- TAB SWITCHING LOGIC ---
+        const tabElements = [
+            { id: 'tool', triggerEl: document.getElementById('tool-tab'), targetEl: document.getElementById('tool') },
+            { id: 'explanation', triggerEl: document.getElementById('explanation-tab'), targetEl: document.getElementById('explanation') },
+        ];
+        
+        const activeTabClasses = ['border-indigo-600', 'text-indigo-600'];
+        const inactiveTabClasses = ['border-transparent', 'hover:text-gray-600', 'hover:border-gray-300'];
+
+        tabElements.forEach(tab => {
+            tab.triggerEl.addEventListener('click', () => {
+                tabElements.forEach(t => {
+                    t.targetEl.classList.add('hidden');
+                    t.triggerEl.classList.remove(...activeTabClasses);
+                    t.triggerEl.classList.add(...inactiveTabClasses);
+                    t.triggerEl.setAttribute('aria-selected', 'false');
+                });
+                
+                tab.targetEl.classList.remove('hidden');
+                tab.triggerEl.classList.add(...activeTabClasses);
+                tab.triggerEl.classList.remove(...inactiveTabClasses);
+                tab.triggerEl.setAttribute('aria-selected', 'true');
+            });
+        });
+
+
+        // --- INITIALIZATION ---
+        function initCompassSVG(guaData = null) {
+            compassSVG.innerHTML = '';
+            const ns = 'http://www.w3.org/2000/svg';
+
+            // Helper functions
+            function createText(content, x, y, size, rotation = 0, fill = 'black') {
+                const text = document.createElementNS(ns, 'text');
+                text.setAttribute('x', x);
+                text.setAttribute('y', y);
+                text.setAttribute('font-size', size);
+                text.setAttribute('fill', fill);
+                text.setAttribute('text-anchor', 'middle');
+                text.setAttribute('dominant-baseline', 'middle');
+                text.setAttribute('transform', `rotate(${rotation}, ${x}, ${y})`);
+                text.textContent = content;
+                return text;
+            }
+
+            function createPath(d, fill, stroke, strokeWidth) {
+                const path = document.createElementNS(ns, 'path');
+                path.setAttribute('d', d);
+                path.setAttribute('fill', fill);
+                if (stroke) path.setAttribute('stroke', stroke);
+                if (strokeWidth) path.setAttribute('stroke-width', strokeWidth);
+                return path;
+            }
+
+            // Data for the 8 sectors
+            const sectorData = [
+                { angle: 0,   trigram: '☵', number: '1', name: '正北' }, // North
+                { angle: 45,  trigram: '☶', number: '8', name: '东北' }, // Northeast
+                { angle: 90,  trigram: '☳', number: '3', name: '正东' }, // East
+                { angle: 135, trigram: '☴', number: '4', name: '东南' }, // Southeast
+                { angle: 180, trigram: '☲', number: '9', name: '正南' }, // South
+                { angle: 225, trigram: '☷', number: '2', name: '西南' }, // Southwest
+                { angle: 270, trigram: '☱', number: '7', name: '正西' }, // West
+                { angle: 315, trigram: '☰', number: '6', name: '西北' }  // Northwest
+            ];
+            
+            // Background circle
+            const bg = createPath('M 0 100 A 100 100 0 0 1 100 0 A 100 100 0 0 1 200 100 A 100 100 0 0 1 100 200 A 100 100 0 0 1 0 100 Z', 'white');
+            bg.setAttribute('fill-opacity', '0.7');
+            compassSVG.appendChild(bg);
+
+            // --- 8 MANSIONS COLORING ---
+            if (guaData) {
+                const mansionGroup = document.createElementNS(ns, 'g');
+                guaData.directions.forEach(dir => {
+                    const r_outer = 98;
+                    const r_inner = 30;
+                    const startAngleRad = (dir.angle - 90 - 22.5) * Math.PI / 180;
+                    const endAngleRad = (dir.angle - 90 + 22.5) * Math.PI / 180;
+
+                    const x_outer_start = 100 + r_outer * Math.cos(startAngleRad);
+                    const y_outer_start = 100 + r_outer * Math.sin(startAngleRad);
+                    const x_outer_end = 100 + r_outer * Math.cos(endAngleRad);
+                    const y_outer_end = 100 + r_outer * Math.sin(endAngleRad);
+                    const x_inner_start = 100 + r_inner * Math.cos(startAngleRad);
+                    const y_inner_start = 100 + r_inner * Math.sin(startAngleRad);
+                    const x_inner_end = 100 + r_inner * Math.cos(endAngleRad);
+                    const y_inner_end = 100 + r_inner * Math.sin(endAngleRad);
+                    
+                    const pathData = `M ${x_inner_start},${y_inner_start} L ${x_outer_start},${y_outer_start} A ${r_outer},${r_outer} 0 0 1 ${x_outer_end},${y_outer_end} L ${x_inner_end},${y_inner_end} A ${r_inner},${r_inner} 0 0 0 ${x_inner_start},${y_inner_start} Z`;
+                    const path = createPath(pathData, dir.color);
+                    path.setAttribute('fill-opacity', 0.4);
+                    mansionGroup.appendChild(path);
+                });
+                compassSVG.appendChild(mansionGroup);
+            } else {
+                 // Red background sectors (Default view)
+                const redGroup = document.createElementNS(ns, 'g');
+                const redIndices = [0, 3, 4, 6]; // N, SE, S, W
+                redIndices.forEach(i => {
+                    const angle = sectorData[i].angle;
+                    const r_outer = 85;
+                    const r_inner = 30;
+                    const startAngleRad = (angle - 90 - 22.5) * Math.PI / 180;
+                    const endAngleRad = (angle - 90 + 22.5) * Math.PI / 180;
+
+                    const x_outer_start = 100 + r_outer * Math.cos(startAngleRad);
+                    const y_outer_start = 100 + r_outer * Math.sin(startAngleRad);
+                    const x_outer_end = 100 + r_outer * Math.cos(endAngleRad);
+                    const y_outer_end = 100 + r_outer * Math.sin(endAngleRad);
+                    const x_inner_start = 100 + r_inner * Math.cos(startAngleRad);
+                    const y_inner_start = 100 + r_inner * Math.sin(startAngleRad);
+                    const x_inner_end = 100 + r_inner * Math.cos(endAngleRad);
+                    const y_inner_end = 100 + r_inner * Math.sin(endAngleRad);
+                    
+                    const pathData = `M ${x_inner_start},${y_inner_start} L ${x_outer_start},${y_outer_start} A ${r_outer},${r_outer} 0 0 1 ${x_outer_end},${y_outer_end} L ${x_inner_end},${y_inner_end} A ${r_inner},${r_inner} 0 0 0 ${x_inner_start},${y_inner_start} Z`;
+                    const path = createPath(pathData, 'red');
+                    path.setAttribute('fill-opacity', 0.4);
+                    redGroup.appendChild(path);
+                });
+                compassSVG.appendChild(redGroup);
+            }
+
+            // Rings
+            const rings = [98, 85, 70, 55, 30];
+            rings.forEach(r => {
+                const circle = document.createElementNS(ns, 'circle');
+                circle.setAttribute('cx', 100); circle.setAttribute('cy', 100); circle.setAttribute('r', r);
+                circle.setAttribute('fill', 'none'); circle.setAttribute('stroke', 'black'); circle.setAttribute('stroke-width', '0.5');
+                compassSVG.appendChild(circle);
+            });
+
+            // Degree markers
+            const degreeGroup = document.createElementNS(ns, 'g');
+            for (let i = 0; i < 360; i += 2) {
+                const angleRad = (i - 90) * Math.PI / 180;
+                const isMajor = i % 10 === 0;
+                const r1 = isMajor ? 92 : 95;
+                const r2 = 98;
+                const x1 = 100 + r1 * Math.cos(angleRad);
+                const y1 = 100 + r1 * Math.sin(angleRad);
+                const x2 = 100 + r2 * Math.cos(angleRad);
+                const y2 = 100 + r2 * Math.sin(angleRad);
+                const line = document.createElementNS(ns, 'line');
+                line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+                line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+                line.setAttribute('stroke', 'black'); line.setAttribute('stroke-width', isMajor ? 0.7 : 0.4);
+                degreeGroup.appendChild(line);
+
+                if (i % 10 === 0) {
+                     const textR = 89;
+                     const textX = 100 + textR * Math.cos(angleRad);
+                     const textY = 100 + textR * Math.sin(angleRad);
+                     const text = createText(i, textX, textY, 4, i);
+                     degreeGroup.appendChild(text);
+                }
+            }
+            compassSVG.appendChild(degreeGroup);
+
+            // Trigrams, Numbers, and Text
+            const contentGroup = document.createElementNS(ns, 'g');
+            sectorData.forEach(sector => {
+                const angleRad = (sector.angle - 90) * Math.PI / 180;
+                
+                // Trigrams
+                const r_trigram = 42.5;
+                const x_trigram = 100 + r_trigram * Math.cos(angleRad);
+                const y_trigram = 100 + r_trigram * Math.sin(angleRad);
+                contentGroup.appendChild(createText(sector.trigram, x_trigram, y_trigram, 12, sector.angle));
+
+                // Numbers
+                const r_number = 62.5;
+                const x_number = 100 + r_number * Math.cos(angleRad);
+                const y_number = 100 + r_number * Math.sin(angleRad);
+                contentGroup.appendChild(createText(sector.number, x_number, y_number, 10, sector.angle, 'red'));
+
+                // Names
+                const r_name = 77.5;
+                const x_name = 100 + r_name * Math.cos(angleRad);
+                const y_name = 100 + r_name * Math.sin(angleRad);
+                contentGroup.appendChild(createText(sector.name, x_name, y_name, 7, sector.angle));
+            });
+            compassSVG.appendChild(contentGroup);
+            
+            // Center Number - Use Gua number if available, otherwise default to 5
+            const centerNumber = guaData ? guaData.gua : '5';
+            compassSVG.appendChild(createText(centerNumber, 100, 100, 10, 0, 'red'));
+        }
+        initCompassSVG();
+
+        // --- EVENT LISTENERS ---
+        fileUpload.addEventListener('change', handleFileSelect);
+        // Mouse Listeners
+        floorplanContainer.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        // Touch Listeners for Mobile Support
+        floorplanContainer.addEventListener('touchstart', onMouseDown, { passive: false });
+        document.addEventListener('touchmove', onMouseMove, { passive: false });
+        document.addEventListener('touchend', onMouseUp);
+
+
+        resetBtn.addEventListener('click', resetView);
+        saveBtn.addEventListener('click', saveAsPNG);
+        calculateGuaBtn.addEventListener('click', handleGuaCalculation);
+        
+        facingBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                // Remove active class from all buttons
+                facingBtns.forEach(b => b.classList.remove('active'));
+                // Add active class to the clicked button
+                const clickedBtn = e.currentTarget;
+                clickedBtn.classList.add('active');
+                // Update the angle from the data attribute
+                facingReferenceAngle = parseInt(clickedBtn.dataset.angle, 10);
+                // Update the orientation
+                setOrientation();
+            });
+        });
+
+        facingDirectionInput.addEventListener('input', () => setOrientation());
+
+        opacitySlider.addEventListener('input', (e) => {
+            if(compassContainer) compassContainer.style.opacity = e.target.value;
+        });
+
+        zoomSlider.addEventListener('input', handleZoom);
+
+        // --- MOUSE/PANNING DISPATCHERS ---
+        function onMouseDown(event) {
+            if (!activeElement) return;
+            // Panning is only allowed after Gua is calculated and a selection can be made
+            if (userGuaData && selectionRect.w) { // If zoomed in
+                startPan(event);
+            } else if (userGuaData) { // If at original view after calculating Gua
+                startDrawing(event);
+            }
+        }
+        
+        function onMouseMove(event) {
+            if (isDrawing) {
+                drawRectangle(event);
+            } else if (isPanning) {
+                panView(event);
+            }
+        }
+        
+        function onMouseUp() {
+            if (isDrawing) {
+                stopDrawing();
+            } else if (isPanning) {
+                stopPan();
+            }
+        }
+
+        // --- CORE FUNCTIONS ---
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            resetAll();
+            placeholderText.style.display = 'none';
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                if (file.type.startsWith('image/')) {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.onload = () => {
+                        originalImage = img;
+                        setupInitialView(img);
+                    };
+                } else if (file.type === 'application/pdf') {
+                    renderPdf(e.target.result);
+                }
+            };
+            if (file.type.startsWith('image/')) reader.readAsDataURL(file);
+            else if (file.type === 'application/pdf') reader.readAsArrayBuffer(file);
+        }
+        
+        async function renderPdf(data) {
+            try {
+                const pdf = await pdfjsLib.getDocument({ data }).promise;
+                const page = await pdf.getPage(1);
+                const viewport = page.getViewport({ scale: 2.0 });
+                const canvas = document.createElement('canvas');
+                canvas.id = 'floorplan-canvas';
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                originalImage = canvas;
+                setupInitialView(canvas);
+            } catch (error) {
+                alert('Could not render PDF.');
+            }
+        }
+
+        function setupInitialView(element) {
+            activeElement = element;
+            element.id = 'floorplan-image';
+            floorplanContainer.prepend(element);
+            steps.step2.classList.remove('hidden');
+            setTimeout(() => {
+                drawingCanvas.width = element.offsetWidth;
+                drawingCanvas.height = element.offsetHeight;
+            }, 100);
+        }
+
+        function getMousePos(event) {
+            const input = event.touches ? event.touches[0] : event;
+            const rect = floorplanContainer.getBoundingClientRect();
+             // This needs to account for the current transform (zoom and pan)
+            const style = window.getComputedStyle(floorplanContainer);
+            const matrix = new DOMMatrixReadOnly(style.transform);
+            const scale = matrix.a;
+            const translateX = matrix.e;
+            const translateY = matrix.f;
+
+            // Invert the transform to find the original coordinates
+            return {
+                x: (input.clientX - rect.left - translateX) / scale,
+                y: (input.clientY - rect.top - translateY) / scale
+            };
+        }
+
+        function startDrawing(event) {
+            if (!activeElement || selectionRect.w) return;
+            event.preventDefault();
+            const startPos = getMousePos(event);
+            isDrawing = true;
+            selectionRect.x = startPos.x;
+            selectionRect.y = startPos.y;
+        }
+
+        function drawRectangle(event) {
+            if (!isDrawing) return;
+            event.preventDefault();
+            const currentPos = getMousePos(event);
+            selectionRect.w = currentPos.x - selectionRect.x;
+            selectionRect.h = currentPos.y - selectionRect.y;
+            drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+            drawingCtx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
+            drawingCtx.lineWidth = 2;
+            drawingCtx.strokeRect(selectionRect.x, selectionRect.y, selectionRect.w, selectionRect.h);
+        }
+
+        function stopDrawing() {
+            if (!isDrawing) return;
+            isDrawing = false;
+            
+            viewCenter.x = selectionRect.x + selectionRect.w / 2;
+            viewCenter.y = selectionRect.y + selectionRect.h / 2;
+
+            const wrapperRect = displayWrapper.getBoundingClientRect();
+            const wrapperCenterX = wrapperRect.width / 2;
+            const wrapperCenterY = wrapperRect.height / 2;
+
+            const zoom = 1.5;
+            zoomSlider.value = zoom; // Set slider to initial zoom
+            panTransform.scale = zoom;
+            panTransform.x = wrapperCenterX - (viewCenter.x * zoom);
+            panTransform.y = wrapperCenterY - (viewCenter.y * zoom);
+
+            floorplanContainer.style.transform = `translate(${panTransform.x}px, ${panTransform.y}px) scale(${panTransform.scale})`;
+            floorplanContainer.classList.add('zoomed-in');
+            
+            centerDot.style.left = `${viewCenter.x}px`;
+            centerDot.style.top = `${viewCenter.y}px`;
+            centerDot.style.display = 'block';
+
+            const compassSize = Math.max(Math.abs(selectionRect.w), Math.abs(selectionRect.h));
+            compassContainer.style.width = `${compassSize}px`;
+            compassContainer.style.height = `${compassSize}px`;
+            compassContainer.style.left = `${viewCenter.x}px`;
+            compassContainer.style.top = `${viewCenter.y}px`;
+            compassContainer.style.transform = `translate(-50%, -50%)`;
+
+            saveBtn.classList.remove('hidden');
+            // Set initial opacity from slider
+            compassContainer.style.opacity = opacitySlider.value;
+        }
+
+        function setOrientation() {
+            const userAngle = parseFloat(facingDirectionInput.value) || 0;
+            compassContainer.style.display = 'block';
+
+            const compassRotation = facingReferenceAngle - userAngle;
+            const arrowRotation = facingReferenceAngle;
+
+            compassSVG.style.transform = `rotate(${compassRotation}deg)`;
+            arrowWrapper.style.transform = `rotate(${arrowRotation}deg)`;
+        }
+
+        // --- PANNING FUNCTIONS ---
+        function startPan(event) {
+            event.preventDefault();
+            isPanning = true;
+            const input = event.touches ? event.touches[0] : event;
+            panStart.x = input.clientX;
+            panStart.y = input.clientY;
+            floorplanContainer.classList.add('panning');
+        }
+
+        function panView(event) {
+            if (!isPanning) return;
+            event.preventDefault();
+            const input = event.touches ? event.touches[0] : event;
+            const dx = input.clientX - panStart.x;
+            const dy = input.clientY - panStart.y;
+            
+            const newX = panTransform.x + dx;
+            const newY = panTransform.y + dy;
+
+            floorplanContainer.style.transform = `translate(${newX}px, ${newY}px) scale(${panTransform.scale})`;
+        }
+
+        function stopPan() {
+            if (!isPanning) return;
+            isPanning = false;
+            floorplanContainer.classList.remove('panning');
+            
+            // Update the pan transform state so the next pan starts from the new position
+            const style = window.getComputedStyle(floorplanContainer);
+            const matrix = new DOMMatrixReadOnly(style.transform);
+            panTransform.x = matrix.e;
+            panTransform.y = matrix.f;
+        }
+
+        function handleZoom() {
+            const newScale = parseFloat(zoomSlider.value);
+            
+            const wrapperRect = displayWrapper.getBoundingClientRect();
+            const wrapperCenterX = wrapperRect.width / 2;
+            const wrapperCenterY = wrapperRect.height / 2;
+
+            // Recalculate translation to keep the original center point in the middle of the viewport
+            panTransform.x = wrapperCenterX - (viewCenter.x * newScale);
+            panTransform.y = wrapperCenterY - (viewCenter.y * newScale);
+            panTransform.scale = newScale;
+
+            floorplanContainer.style.transform = `translate(${panTransform.x}px, ${panTransform.y}px) scale(${panTransform.scale})`;
+        }
+
+        function resetView() {
+            selectionRect = {};
+            isDrawing = false;
+            
+            saveBtn.classList.add('hidden');
+            
+            floorplanContainer.style.transform = 'translate(0, 0) scale(1)';
+            floorplanContainer.classList.remove('zoomed-in');
+            centerDot.style.display = 'none';
+            compassContainer.style.display = 'none';
+
+            drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+            facingDirectionInput.value = '';
+            facingReferenceAngle = 0;
+            facingBtns.forEach(btn => {
+                btn.classList.remove('active');
+                if (parseInt(btn.dataset.angle) === 0) {
+                    btn.classList.add('active');
+                }
+            });
+            zoomSlider.value = 1.5;
+
+            panTransform = { x: 0, y: 0, scale: 1 };
+        }
+
+        function resetAll() {
+            if (activeElement) activeElement.remove();
+            originalImage = null;
+            activeElement = null;
+            
+            placeholderText.style.display = 'block';
+            steps.step2.classList.add('hidden');
+            steps.step3.classList.add('hidden');
+            
+            resetView();
+            // Also reset Gua calculator
+            guaResultDiv.classList.add('hidden');
+            birthYearInput.value = '';
+            surnameInput.value = '';
+            givenNameInput.value = '';
+            userGuaData = null;
+            initCompassSVG(); // Re-init with default compass
+        }
+        
+        // --- 8 MANSIONS LOGIC ---
+        const mansionNumberMap = { 0: 1, 45: 8, 90: 3, 135: 4, 180: 9, 225: 2, 270: 7, 315: 6 };
+        const eightMansionsData = {
+            1: { group: 'East', directions: [ { name: 'Sheng Qi (Prosperity)', angle: 135, color: '#22c55e', id: 'sheng-qi' }, { name: 'Tian Yi (Health)', angle: 90, color: '#84cc16', id: 'tian-yi' }, { name: 'Yan Nian (Romance)', angle: 180, color: '#a3e635', id: 'yan-nian' }, { name: 'Fu Wei (Personal)', angle: 0, color: '#d9f99d', id: 'fu-wei' }, { name: 'Huo Hai (Obstacles)', angle: 270, color: '#d1d5db', id: 'huo-hai' }, { name: 'Wu Gui (5 Ghosts)', angle: 45, color: '#9ca3af', id: 'wu-gui' }, { name: 'Liu Sha (6 Killings)', angle: 315, color: '#6b7280', id: 'liu-sha' }, { name: 'Jue Ming (Total Loss)', angle: 225, color: '#ef4444', id: 'jue-ming' } ] },
+            2: { group: 'West', directions: [ { name: 'Sheng Qi (Prosperity)', angle: 45, color: '#22c55e', id: 'sheng-qi' }, { name: 'Tian Yi (Health)', angle: 315, color: '#84cc16', id: 'tian-yi' }, { name: 'Yan Nian (Romance)', angle: 270, color: '#a3e635', id: 'yan-nian' }, { name: 'Fu Wei (Personal)', angle: 225, color: '#d9f99d', id: 'fu-wei' }, { name: 'Huo Hai (Obstacles)', angle: 90, color: '#d1d5db', id: 'huo-hai' }, { name: 'Wu Gui (5 Ghosts)', angle: 0, color: '#9ca3af', id: 'wu-gui' }, { name: 'Liu Sha (6 Killings)', angle: 180, color: '#6b7280', id: 'liu-sha' }, { name: 'Jue Ming (Total Loss)', angle: 135, color: '#ef4444', id: 'jue-ming' } ] },
+            3: { group: 'East', directions: [ { name: 'Sheng Qi (Prosperity)', angle: 180, color: '#22c55e', id: 'sheng-qi' }, { name: 'Tian Yi (Health)', angle: 0, color: '#84cc16', id: 'tian-yi' }, { name: 'Yan Nian (Romance)', angle: 135, color: '#a3e635', id: 'yan-nian' }, { name: 'Fu Wei (Personal)', angle: 90, color: '#d9f99d', id: 'fu-wei' }, { name: 'Huo Hai (Obstacles)', angle: 45, color: '#d1d5db', id: 'huo-hai' }, { name: 'Wu Gui (5 Ghosts)', angle: 315, color: '#9ca3af', id: 'wu-gui' }, { name: 'Liu Sha (6 Killings)', angle: 225, color: '#6b7280', id: 'liu-sha' }, { name: 'Jue Ming (Total Loss)', angle: 270, color: '#ef4444', id: 'jue-ming' } ] },
+            4: { group: 'East', directions: [ { name: 'Sheng Qi (Prosperity)', angle: 0, color: '#22c55e', id: 'sheng-qi' }, { name: 'Tian Yi (Health)', angle: 180, color: '#84cc16', id: 'tian-yi' }, { name: 'Yan Nian (Romance)', angle: 90, color: '#a3e635', id: 'yan-nian' }, { name: 'Fu Wei (Personal)', angle: 135, color: '#d9f99d', id: 'fu-wei' }, { name: 'Huo Hai (Obstacles)', angle: 225, color: '#d1d5db', id: 'huo-hai' }, { name: 'Wu Gui (5 Ghosts)', angle: 315, color: '#9ca3af', id: 'wu-gui' }, { name: 'Liu Sha (6 Killings)', angle: 270, color: '#6b7280', id: 'liu-sha' }, { name: 'Jue Ming (Total Loss)', angle: 45, color: '#ef4444', id: 'jue-ming' } ] },
+            6: { group: 'West', directions: [ { name: 'Sheng Qi (Prosperity)', angle: 270, color: '#22c55e', id: 'sheng-qi' }, { name: 'Tian Yi (Health)', angle: 225, color: '#84cc16', id: 'tian-yi' }, { name: 'Yan Nian (Romance)', angle: 45, color: '#a3e635', id: 'yan-nian' }, { name: 'Fu Wei (Personal)', angle: 315, color: '#d9f99d', id: 'fu-wei' }, { name: 'Huo Hai (Obstacles)', angle: 135, color: '#d1d5db', id: 'huo-hai' }, { name: 'Wu Gui (5 Ghosts)', angle: 90, color: '#9ca3af', id: 'wu-gui' }, { name: 'Liu Sha (6 Killings)', angle: 0, color: '#6b7280', id: 'liu-sha' }, { name: 'Jue Ming (Total Loss)', angle: 180, color: '#ef4444', id: 'jue-ming' } ] },
+            7: { group: 'West', directions: [ { name: 'Sheng Qi (Prosperity)', angle: 315, color: '#22c55e', id: 'sheng-qi' }, { name: 'Tian Yi (Health)', angle: 225, color: '#84cc16', id: 'tian-yi' }, { name: 'Yan Nian (Romance)', angle: 45, color: '#a3e635', id: 'yan-nian' }, { name: 'Fu Wei (Personal)', angle: 270, color: '#d9f99d', id: 'fu-wei' }, { name: 'Huo Hai (Obstacles)', angle: 0, color: '#d1d5db', id: 'huo-hai' }, { name: 'Wu Gui (5 Ghosts)', angle: 180, color: '#9ca3af', id: 'wu-gui' }, { name: 'Liu Sha (6 Killings)', angle: 90, color: '#6b7280', id: 'liu-sha' }, { name: 'Jue Ming (Total Loss)', angle: 135, color: '#ef4444', id: 'jue-ming' } ] },
+            8: { group: 'West', directions: [ { name: 'Sheng Qi (Prosperity)', angle: 225, color: '#22c55e', id: 'sheng-qi' }, { name: 'Tian Yi (Health)', angle: 270, color: '#84cc16', id: 'tian-yi' }, { name: 'Yan Nian (Romance)', angle: 315, color: '#a3e635', id: 'yan-nian' }, { name: 'Fu Wei (Personal)', angle: 45, color: '#d9f99d', id: 'fu-wei' }, { name: 'Huo Hai (Obstacles)', angle: 180, color: '#d1d5db', id: 'huo-hai' }, { name: 'Wu Gui (5 Ghosts)', angle: 90, color: '#9ca3af', id: 'wu-gui' }, { name: 'Liu Sha (6 Killings)', angle: 135, color: '#6b7280', id: 'liu-sha' }, { name: 'Jue Ming (Total Loss)', angle: 0, color: '#ef4444', id: 'jue-ming' } ] },
+            9: { group: 'East', directions: [ { name: 'Sheng Qi (Prosperity)', angle: 90, color: '#22c55e', id: 'sheng-qi' }, { name: 'Tian Yi (Health)', angle: 135, color: '#84cc16', id: 'tian-yi' }, { name: 'Yan Nian (Romance)', angle: 0, color: '#a3e635', id: 'yan-nian' }, { name: 'Fu Wei (Personal)', angle: 180, color: '#d9f99d', id: 'fu-wei' }, { name: 'Huo Hai (Obstacles)', angle: 315, color: '#d1d5db', id: 'huo-hai' }, { name: 'Wu Gui (5 Ghosts)', angle: 225, color: '#9ca3af', id: 'wu-gui' }, { name: 'Liu Sha (6 Killings)', angle: 270, color: '#6b7280', id: 'liu-sha' }, { name: 'Jue Ming (Total Loss)', angle: 45, color: '#ef4444', id: 'jue-ming' } ] }
+        };
+
+        function calculateGua(year, gender) {
+            // Formula for years 1900-1999
+            if (year >= 1900 && year <= 1999) {
+                const lastTwoDigits = year % 100;
+                let sum = Math.floor(lastTwoDigits / 10) + (lastTwoDigits % 10);
+                while (sum > 9) {
+                    sum = Math.floor(sum / 10) + (sum % 10);
+                }
+
+                let gua;
+                if (gender === 'male') {
+                    gua = 10 - sum;
+                } else { // female
+                    gua = 5 + sum;
+                }
+
+                while (gua > 9) {
+                    gua = Math.floor(gua / 10) + (gua % 10);
+                }
+                if (gua === 5) { gua = (gender === 'male') ? 2 : 8; }
+                return gua;
+            }
+            // Formula for years 2000 onwards
+            else if (year >= 2000) {
+                 const lastTwoDigits = year % 100;
+                let sum = Math.floor(lastTwoDigits / 10) + (lastTwoDigits % 10);
+                while (sum > 9) {
+                    sum = Math.floor(sum / 10) + (sum % 10);
+                }
+
+                let gua;
+                if (gender === 'male') {
+                    gua = 9 - sum;
+                } else { // female
+                    gua = 6 + sum;
+                }
+
+                while (gua > 9) {
+                    gua = Math.floor(gua / 10) + (gua % 10);
+                }
+                if (gua === 0) { gua = 9; }
+                if (gua === 5) { gua = (gender === 'male') ? 2 : 8; }
+                return gua;
+            }
+            return null; // For years outside the common range
+        }
+        
+        function handleGuaCalculation() {
+            const year = parseInt(birthYearInput.value);
+            const gender = genderSelect.value;
+            const surname = surnameInput.value;
+
+            if (!year || year < 1900 || year > 2100) {
+                alert('Please enter a valid year of birth (1900-2100).');
+                return;
+            }
+            if (!surname) {
+                alert('Please enter your surname.');
+                return;
+            }
+            
+            const gua = calculateGua(year, gender);
+            if (gua === null) {
+                 alert('Calculation for this year is not supported.');
+                 return;
+            }
+            userGuaData = eightMansionsData[gua];
+            userGuaData.gua = gua; // Add the gua number to the object for later use
+            
+            guaNumberDisplay.textContent = gua;
+            guaGroupDisplay.textContent = `${userGuaData.group} Group`;
+            
+            legendDiv.innerHTML = ''; // Clear previous legend
+            userGuaData.directions.forEach(dir => {
+                const legendItem = document.createElement('div');
+                legendItem.className = 'flex items-center';
+                const colorBox = document.createElement('div');
+                colorBox.className = 'w-3 h-3 rounded-sm mr-2';
+                colorBox.style.backgroundColor = dir.color;
+                legendItem.appendChild(colorBox);
+                legendItem.append(`${dir.name}`);
+                legendDiv.appendChild(legendItem);
+            });
+            
+            // --- Personalize Explanation Tab ---
+            const title = gender === 'male' ? 'Mr.' : 'Ms.';
+            explanationGreeting.textContent = `Hello ${title} ${surname}, your Gua Number is ${gua}. Here are your personalized directions:`;
+            
+            userGuaData.directions.forEach(dir => {
+                const mansionNumber = mansionNumberMap[dir.angle];
+                const spanEl = document.getElementById(`${dir.id}-mansion-number`);
+                if (spanEl) {
+                    spanEl.textContent = `(Mansion ${mansionNumber})`;
+                }
+            });
+
+
+            guaResultDiv.classList.remove('hidden');
+            initCompassSVG(userGuaData); // Redraw compass with personalized colors
+            steps.step3.classList.remove('hidden');
+        }
+
+        // --- SAVE FUNCTIONALITY ---
+        /**
+         * Converts an SVG element into a promise that resolves with an Image object.
+         * This is needed to draw the SVG onto the canvas for saving.
+         * @param {SVGElement} svgElement The SVG element to convert.
+         * @returns {Promise<Image>} A promise that resolves with the loaded Image object.
+         */
+        function svgToImagePromise(svgElement) {
+            return new Promise((resolve, reject) => {
+                const svgString = new XMLSerializer().serializeToString(svgElement);
+                // Use unescape and encodeURIComponent to handle foreign characters in SVG
+                const svgDataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)));
+                
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = (err) => reject(err);
+                img.src = svgDataUrl;
+            });
+        }
+
+        /**
+         * Composites the floor plan and all overlays into a single image and triggers a download.
+         */
+        async function saveAsPNG() {
+            if (!originalImage || !selectionRect.w) {
+                alert("Please select an area on the floor plan first.");
+                return;
+            }
+
+            const finalCanvas = document.createElement('canvas');
+            const wrapperRect = displayWrapper.getBoundingClientRect();
+            finalCanvas.width = wrapperRect.width;
+            finalCanvas.height = wrapperRect.height;
+            const finalCtx = finalCanvas.getContext('2d');
+
+            // Draw the white background
+            finalCtx.fillStyle = 'white';
+            finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+
+            // Apply the same transform to the context as the floorplan container
+            finalCtx.save();
+            finalCtx.translate(panTransform.x, panTransform.y);
+            finalCtx.scale(panTransform.scale, panTransform.scale);
+            finalCtx.drawImage(originalImage, 0, 0, originalImage.width, originalImage.height);
+            finalCtx.restore();
+
+            // Prepare to draw overlays
+            try {
+                const compassImg = await svgToImagePromise(compassSVG);
+                const arrowImg = await svgToImagePromise(document.getElementById('facing-arrow'));
+
+                // Calculate the position and size of the compass relative to the final canvas
+                const centerX_on_plan = selectionRect.x + selectionRect.w / 2;
+                const centerY_on_plan = selectionRect.y + selectionRect.h / 2;
+
+                const transformedCenter = {
+                    x: centerX_on_plan * panTransform.scale + panTransform.x,
+                    y: centerY_on_plan * panTransform.scale + panTransform.y,
+                };
+                
+                const compassSize_on_plan = Math.max(Math.abs(selectionRect.w), Math.abs(selectionRect.h));
+                const compassSize_on_canvas = compassSize_on_plan * panTransform.scale;
+                
+                finalCtx.globalAlpha = parseFloat(opacitySlider.value);
+
+                // Draw Compass
+                finalCtx.save();
+                finalCtx.translate(transformedCenter.x, transformedCenter.y);
+                const compassRotation = facingReferenceAngle - (parseFloat(facingDirectionInput.value) || 0);
+                finalCtx.rotate(compassRotation * Math.PI / 180);
+                finalCtx.drawImage(compassImg, -compassSize_on_canvas / 2, -compassSize_on_canvas / 2, compassSize_on_canvas, compassSize_on_canvas);
+                finalCtx.restore();
+
+                // Draw Arrow
+                finalCtx.save();
+                finalCtx.translate(transformedCenter.x, transformedCenter.y);
+                finalCtx.rotate(facingReferenceAngle * Math.PI / 180);
+                // Scale arrow based on compass size
+                const baseCompassSize = 200; // The viewBox size of the SVG
+                const scaleFactor = compassSize_on_canvas / baseCompassSize;
+                const arrowWidth = 20 * scaleFactor;
+                const arrowHeight = 50 * scaleFactor;
+                const arrowYOffset = -25 * scaleFactor; // Half height of arrow
+                finalCtx.drawImage(arrowImg, -arrowWidth / 2, -arrowYOffset - (compassSize_on_canvas / 2), arrowWidth, arrowHeight);
+                finalCtx.restore();
+
+                // Trigger download
+                finalCtx.globalAlpha = 1.0; 
+                const link = document.createElement('a');
+                link.download = 'feng-shui-plan.png';
+                link.href = finalCanvas.toDataURL('image/png');
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+            } catch (err) {
+                console.error("Error creating image from SVG for saving:", err);
+                alert("Could not save the image. Please try again.");
+            }
+        }
+    </script>
+</body>
+</html>
+
